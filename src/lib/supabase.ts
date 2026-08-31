@@ -1,6 +1,11 @@
 import { createClient } from "@supabase/supabase-js";
 
 export const getEnv = (key: string): string => {
+  if (typeof window === "undefined") {
+    if (typeof process !== "undefined" && process.env && process.env[key]) {
+      return process.env[key];
+    }
+  }
   if (typeof import.meta !== "undefined" && import.meta.env && import.meta.env[key]) {
     return import.meta.env[key];
   }
@@ -48,6 +53,10 @@ export const hasSupabaseKeys = !!(
   supabaseUrl.startsWith("https://") &&
   !supabaseUrl.includes("your-project-id")
 );
+
+if (typeof window === "undefined") {
+  console.log("🔥 Live Supabase URL:", supabaseUrl);
+}
 
 if (!hasSupabaseKeys) {
   console.warn(
