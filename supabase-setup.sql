@@ -418,22 +418,55 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON "project"              TO anon, authenti
 GRANT SELECT                          ON "recent_activity"      TO anon, authenticated;
 
 -- ============================================================
--- DISABLE RLS ON ALL TABLES
+-- ENABLE PERMISSIVE RLS POLICIES ON ALL TABLES
 -- ============================================================
-ALTER TABLE "members"              DISABLE ROW LEVEL SECURITY;
-ALTER TABLE "papers"               DISABLE ROW LEVEL SECURITY;
-ALTER TABLE "tasks"                DISABLE ROW LEVEL SECURITY;
-ALTER TABLE "notes"                DISABLE ROW LEVEL SECURITY;
-ALTER TABLE "shots"                DISABLE ROW LEVEL SECURITY;
-ALTER TABLE "shot_comments"        DISABLE ROW LEVEL SECURITY;
-ALTER TABLE "voiceNotes"           DISABLE ROW LEVEL SECURITY;
-ALTER TABLE "files"                DISABLE ROW LEVEL SECURITY;
-ALTER TABLE "links"                DISABLE ROW LEVEL SECURITY;
-ALTER TABLE "meetings"             DISABLE ROW LEVEL SECURITY;
-ALTER TABLE "meeting_participants"  DISABLE ROW LEVEL SECURITY;
-ALTER TABLE "events"               DISABLE ROW LEVEL SECURITY;
-ALTER TABLE "event_attendees"      DISABLE ROW LEVEL SECURITY;
-ALTER TABLE "phases"               DISABLE ROW LEVEL SECURITY;
-ALTER TABLE "phase_members"        DISABLE ROW LEVEL SECURITY;
-ALTER TABLE "activity"             DISABLE ROW LEVEL SECURITY;
-ALTER TABLE "project"              DISABLE ROW LEVEL SECURITY;
+ALTER TABLE "members"              ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Permissive Policy" ON "members"              FOR ALL TO public USING (true) WITH CHECK (true);
+
+ALTER TABLE "papers"               ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Permissive Policy" ON "papers"               FOR ALL TO public USING (true) WITH CHECK (true);
+
+ALTER TABLE "tasks"                ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Permissive Policy" ON "tasks"                FOR ALL TO public USING (true) WITH CHECK (true);
+
+ALTER TABLE "notes"                ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Permissive Policy" ON "notes"                FOR ALL TO public USING (true) WITH CHECK (true);
+
+ALTER TABLE "shots"                ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Permissive Policy" ON "shots"                FOR ALL TO public USING (true) WITH CHECK (true);
+
+ALTER TABLE "shot_comments"        ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Permissive Policy" ON "shot_comments"        FOR ALL TO public USING (true) WITH CHECK (true);
+
+ALTER TABLE "voiceNotes"           ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Permissive Policy" ON "voiceNotes"           FOR ALL TO public USING (true) WITH CHECK (true);
+
+ALTER TABLE "files"                ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Permissive Policy" ON "files"                FOR ALL TO public USING (true) WITH CHECK (true);
+
+ALTER TABLE "links"                ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Permissive Policy" ON "links"                FOR ALL TO public USING (true) WITH CHECK (true);
+
+ALTER TABLE "meetings"             ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Permissive Policy" ON "meetings"             FOR ALL TO public USING (true) WITH CHECK (true);
+
+ALTER TABLE "meeting_participants"  ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Permissive Policy" ON "meeting_participants"  FOR ALL TO public USING (true) WITH CHECK (true);
+
+ALTER TABLE "events"               ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Permissive Policy" ON "events"               FOR ALL TO public USING (true) WITH CHECK (true);
+
+ALTER TABLE "event_attendees"      ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Permissive Policy" ON "event_attendees"      FOR ALL TO public USING (true) WITH CHECK (true);
+
+ALTER TABLE "phases"               ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Permissive Policy" ON "phases"               FOR ALL TO public USING (true) WITH CHECK (true);
+
+ALTER TABLE "phase_members"        ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Permissive Policy" ON "phase_members"        FOR ALL TO public USING (true) WITH CHECK (true);
+
+ALTER TABLE "activity"             ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Permissive Policy" ON "activity"             FOR ALL TO public USING (true) WITH CHECK (true);
+
+ALTER TABLE "project"              ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Permissive Policy" ON "project"              FOR ALL TO public USING (true) WITH CHECK (true);
