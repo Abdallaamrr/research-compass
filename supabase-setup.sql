@@ -50,6 +50,7 @@ CREATE TABLE "members" (
   "cv_storage_path" TEXT,
   "cv_mime_type"    TEXT,
   "cv_size_bytes"   BIGINT,
+  "linkedinUrl"     TEXT,
   "created_at"     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
