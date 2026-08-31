@@ -58,6 +58,10 @@ if (typeof window === "undefined") {
   console.log("🔥 Live Supabase URL:", supabaseUrl);
 }
 
+if (typeof window !== "undefined") {
+  console.log("🔥 Browser Supabase URL:", supabaseUrl);
+}
+
 if (!hasSupabaseKeys) {
   console.warn(
     "Supabase credentials are missing, placeholder, or invalid. App is running in offline mode with mock seed data."
