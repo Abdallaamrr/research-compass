@@ -7,7 +7,7 @@
 
 -- ============================================================
 -- DROP existing tables for a clean reinstall (idempotent)
--- ============================================================
+DROP TABLE IF EXISTS "project"              CASCADE;
 DROP TABLE IF EXISTS "shot_comments"        CASCADE;
 DROP TABLE IF EXISTS "meeting_participants"  CASCADE;
 DROP TABLE IF EXISTS "phase_members"        CASCADE;
@@ -47,6 +47,9 @@ CREATE TABLE "members" (
   "privateEmail"   TEXT,
   "email_verified" BOOLEAN     NOT NULL DEFAULT false,
   "githubUsername" TEXT,
+  "cv_storage_path" TEXT,
+  "cv_mime_type"    TEXT,
+  "cv_size_bytes"   BIGINT,
   "created_at"     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -67,6 +70,9 @@ CREATE TABLE "papers" (
   "ownerId"     TEXT        NOT NULL REFERENCES "members"("id") ON DELETE SET NULL,
   "progress"    INTEGER     NOT NULL DEFAULT 0 CHECK ("progress" BETWEEN 0 AND 100),
   "analysis"    JSONB       NOT NULL DEFAULT '{}',
+  "storage_path" TEXT,
+  "mime_type"    TEXT,
+  "size_bytes"   BIGINT,
   "created_at"  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -119,6 +125,9 @@ CREATE TABLE "shots" (
   "hue"         INTEGER     NOT NULL DEFAULT 220,
   "comments"    JSONB       NOT NULL DEFAULT '[]',
   "url"         TEXT,
+  "storage_path" TEXT,
+  "mime_type"    TEXT,
+  "size_bytes"   BIGINT,
   "created_at"  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -142,6 +151,10 @@ CREATE TABLE "voiceNotes" (
   "paperId"     TEXT        REFERENCES "papers"("id") ON DELETE SET NULL,
   "taskId"      TEXT        REFERENCES "tasks"("id")  ON DELETE SET NULL,
   "url"         TEXT,
+  "storage_path" TEXT,
+  "mime_type"    TEXT,
+  "size_bytes"   BIGINT,
+  "meetingId"    TEXT,
   "created_at"  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -155,6 +168,10 @@ CREATE TABLE "files" (
   "uploadedBy"  TEXT        NOT NULL REFERENCES "members"("id") ON DELETE SET NULL,
   "date"        TEXT        NOT NULL DEFAULT '',
   "url"         TEXT,
+  "storage_path" TEXT,
+  "mime_type"    TEXT,
+  "size_bytes"   BIGINT,
+  "paperId"      TEXT REFERENCES "papers"("id") ON DELETE SET NULL,
   "created_at"  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -232,6 +249,21 @@ CREATE TABLE "phase_members" (
   PRIMARY KEY ("phase_id", "member_id")
 );
 
+-- Project Details
+CREATE TABLE "project" (
+  "id"          TEXT        PRIMARY KEY,
+  "name"        TEXT        NOT NULL,
+  "topic"       TEXT        NOT NULL,
+  "institution" TEXT        NOT NULL,
+  "phase"       TEXT        NOT NULL,
+  "progress"    INTEGER     NOT NULL
+);
+
+-- Seed with initial project details
+INSERT INTO "project" ("id", "name", "topic", "institution", "phase", "progress")
+VALUES ('default', 'SehatMasr', 'Ontology-Driven Clinical NLP for Early Sepsis Risk Detection', 'Faculty of Computing · Graduation Research Group 07', 'Phase 3 · Dataset Collection', 46)
+ON CONFLICT ("id") DO NOTHING;
+
 -- Activity Log
 CREATE TABLE "activity" (
   "id"          TEXT        PRIMARY KEY,
@@ -289,12 +321,14 @@ CREATE INDEX "idx_shot_cmt_created"   ON "shot_comments" ("created_at" DESC);
 CREATE INDEX "idx_voice_author"       ON "voiceNotes" ("authorId");
 CREATE INDEX "idx_voice_paper"        ON "voiceNotes" ("paperId");
 CREATE INDEX "idx_voice_task"         ON "voiceNotes" ("taskId");
+CREATE INDEX "idx_voice_meeting"      ON "voiceNotes" ("meetingId");
 CREATE INDEX "idx_voice_created"      ON "voiceNotes" ("created_at" DESC);
 
 -- files
 CREATE INDEX "idx_files_folder"       ON "files" ("folder");
 CREATE INDEX "idx_files_uploader"     ON "files" ("uploadedBy");
 CREATE INDEX "idx_files_ext"          ON "files" ("ext");
+CREATE INDEX "idx_files_paper"        ON "files" ("paperId");
 CREATE INDEX "idx_files_created"      ON "files" ("created_at" DESC);
 
 -- links
@@ -380,6 +414,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON "event_attendees"      TO anon, authenti
 GRANT SELECT, INSERT, UPDATE, DELETE ON "phases"               TO anon, authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON "phase_members"        TO anon, authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON "activity"             TO anon, authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON "project"              TO anon, authenticated;
 GRANT SELECT                          ON "recent_activity"      TO anon, authenticated;
 
 -- ============================================================
@@ -401,3 +436,4 @@ ALTER TABLE "event_attendees"      DISABLE ROW LEVEL SECURITY;
 ALTER TABLE "phases"               DISABLE ROW LEVEL SECURITY;
 ALTER TABLE "phase_members"        DISABLE ROW LEVEL SECURITY;
 ALTER TABLE "activity"             DISABLE ROW LEVEL SECURITY;
+ALTER TABLE "project"              DISABLE ROW LEVEL SECURITY;
