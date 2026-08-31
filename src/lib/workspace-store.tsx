@@ -97,10 +97,7 @@ export type Preferences = {
   emailReminders: boolean;
 };
 
-import { db, hasFirebaseKeys } from "./firebase";
-import { doc, collection, onSnapshot, query, orderBy, setDoc, deleteDoc, updateDoc } from "firebase/firestore";
-
-const hasSupabaseKeys = hasFirebaseKeys;
+import { supabase, hasSupabaseKeys } from "./supabase";
 
 const uid = () => Math.random().toString(36).slice(2, 9);
 
@@ -219,7 +216,6 @@ type Ctx = {
   broadcastTyping: (conversationId: string, isTyping: boolean) => void;
   clearAllData: () => Promise<void>;
   isLoaded: boolean;
-  log: (action: string, object: string, kind: Activity["kind"]) => void;
 };
 
 const WorkspaceContext = createContext<Ctx | null>(null);
@@ -376,9 +372,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           reals = rawMembers.filter((m) => !isFake(m));
 
           if (fakes.length > 0) {
-            Promise.all(fakes.map((fm) => deleteDoc(doc(db, "members", fm.id))))
+            Promise.all(fakes.map((fm) => supabase.from("members").delete().eq("id", fm.id)))
               .then(() => console.info("Purged mock members from live database."))
-              .catch((err: any) => console.error("Error purging mock members:", err));
+              .catch((err) => console.error("Error purging mock members:", err));
           }
         }
 
@@ -423,7 +419,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         setRawNotifications(data.notifications || []);
         setIsLoaded(true);
       })
-      .catch((err: any) => {
+      .catch((err) => {
         console.error("Error loading initial DB workspace data:", err);
         setIsLoaded(true);
       });
@@ -476,152 +472,154 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   }, [currentUser, rawNotifications]);
 
   // Broadcast typing status
-  const broadcastTyping = async (conversationId: string, isTyping: boolean) => {
+  const broadcastTyping = (conversationId: string, isTyping: boolean) => {
     if (!hasSupabaseKeys || !currentUser) return;
-    try {
-      const typingRef = doc(db, "typing", `${currentUser.id}_${conversationId}`);
-      if (isTyping) {
-        await setDoc(typingRef, {
-          conversationId,
-          memberId: currentUser.id,
-          isTyping: true,
-          updatedAt: new Date().toISOString()
-        });
-      } else {
-        await deleteDoc(typingRef);
-      }
-    } catch (e) {
-      console.error("Error broadcasting typing status:", e);
-    }
+    supabase.channel("room-presence").send({
+      type: "broadcast",
+      event: "typing",
+      payload: { conversationId, memberId: currentUser.id, isTyping },
+    });
   };
-
-  // Presence sync effect
-  useEffect(() => {
-    if (!hasSupabaseKeys || !currentUser) return;
-    const presenceRef = doc(db, "presence", currentUser.id);
-    
-    // Set initial online status
-    setDoc(presenceRef, {
-      name: currentUser.name,
-      online_at: new Date().toISOString()
-    }).catch(() => {});
-
-    // Periodic keep-alive heartbeat
-    const interval = setInterval(() => {
-      setDoc(presenceRef, {
-        name: currentUser.name,
-        online_at: new Date().toISOString()
-      }, { merge: true }).catch(() => {});
-    }, 15000);
-
-    return () => {
-      clearInterval(interval);
-      deleteDoc(presenceRef).catch(() => {});
-    };
-  }, [currentUser]);
 
   // Realtime subscription
   useEffect(() => {
     if (!hasSupabaseKeys) return;
 
-    const unsubs: (() => void)[] = [];
-
-    const syncCollection = <T extends object>(
-      colName: string, 
-      setter: React.Dispatch<React.SetStateAction<T[]>>,
-      orderField?: string,
-      direction: "asc" | "desc" = "asc"
-    ) => {
-      try {
-        const colRef = collection(db, colName);
-        let q = query(colRef);
-        if (orderField) {
-          q = query(colRef, orderBy(orderField, direction));
+    // 1. Subscribe to DB updates
+    const dbChannel = supabase
+      .channel("db-changes")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "comments" },
+        (payload: any) => {
+          if (payload.eventType === "INSERT") {
+            setComments((prev) => {
+              if (prev.some((x) => x.id === payload.new.id)) return prev;
+              return [...prev, payload.new as Comment];
+            });
+          } else if (payload.eventType === "UPDATE") {
+            setComments((prev) =>
+              prev.map((c) => (c.id === payload.new.id ? (payload.new as Comment) : c))
+            );
+          } else if (payload.eventType === "DELETE") {
+            setComments((prev) => prev.filter((c) => c.id !== payload.old.id));
+          }
         }
-        const unsub = onSnapshot(q, (snapshot) => {
-          const items = snapshot.docs.map((d) => ({ id: d.id, ...d.data() } as any as T));
-          setter(items);
-        }, (err: any) => console.error(`Error syncing collection [${colName}]:`, err));
-        unsubs.push(unsub);
-      } catch (err: any) {
-        console.error(`Failed to register sync for [${colName}]:`, err);
-      }
-    };
-
-    // Sync all collections in real-time
-    syncCollection("members", setMembers);
-    syncCollection("papers", setPapers, "year", "desc");
-    syncCollection("tasks", setTasks);
-    syncCollection("notes", setNotes);
-    syncCollection("shots", setShots);
-    syncCollection("voiceNotes", setVoiceNotes);
-    syncCollection("files", setFiles);
-    syncCollection("links", setLinks);
-    syncCollection("meetings", setMeetings);
-    syncCollection("events", setEvents, "date", "asc");
-    syncCollection("activity", setActivity);
-    syncCollection("phases", setPhases);
-    syncCollection("comments", setComments, "created_at", "asc");
-    syncCollection("conversations", setConversations, "created_at", "desc");
-    syncCollection("conversation_members", setConversationMembers);
-    syncCollection("messages", setMessages, "created_at", "asc");
-    syncCollection("notifications", setRawNotifications, "created_at", "desc");
-
-    // Sync project doc
-    try {
-      const unsubProject = onSnapshot(doc(db, "project", "default"), (snapshot) => {
-        if (snapshot.exists()) {
-          setProject(snapshot.data() as any);
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "conversations" },
+        (payload: any) => {
+          if (payload.eventType === "INSERT") {
+            setConversations((prev) => {
+              if (prev.some((x) => x.id === payload.new.id)) return prev;
+              return [payload.new as Conversation, ...prev];
+            });
+          } else if (payload.eventType === "UPDATE") {
+            setConversations((prev) => prev.map((c) => (c.id === payload.new.id ? { ...c, ...payload.new } : c)));
+          } else if (payload.eventType === "DELETE") {
+            setConversations((prev) => prev.filter((c) => c.id !== payload.old.id));
+          }
         }
-      });
-      unsubs.push(unsubProject);
-    } catch (projectSyncErr) {
-      console.error("Failed to sync project doc:", projectSyncErr);
-    }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "conversation_members" },
+        (payload: any) => {
+          if (payload.eventType === "INSERT") {
+            setConversationMembers((prev) => {
+              if (prev.some((x) => x.conversation_id === payload.new.conversation_id && x.member_id === payload.new.member_id)) return prev;
+              return [...prev, payload.new as ConversationMember];
+            });
+          } else if (payload.eventType === "DELETE") {
+            setConversationMembers((prev) =>
+              prev.filter((x) => !(x.conversation_id === payload.old.conversation_id && x.member_id === payload.old.member_id))
+            );
+          }
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "messages" },
+        (payload: any) => {
+          if (payload.eventType === "INSERT") {
+            setMessages((prev) => {
+              if (prev.some((x) => x.id === payload.new.id)) return prev;
+              return [...prev, payload.new as Message];
+            });
+          } else if (payload.eventType === "UPDATE") {
+            setMessages((prev) =>
+              prev.map((m) => (m.id === payload.new.id ? (payload.new as Message) : m))
+            );
+          }
+        }
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "notifications" },
+        (payload: any) => {
+          if (payload.eventType === "INSERT") {
+            setRawNotifications((prev) => {
+              if (prev.some((x) => x.id === payload.new.id)) return prev;
+              return [payload.new as DbNotification, ...prev];
+            });
+          } else if (payload.eventType === "UPDATE") {
+            setRawNotifications((prev) =>
+              prev.map((n) => (n.id === payload.new.id ? (payload.new as DbNotification) : n))
+            );
+          } else if (payload.eventType === "DELETE") {
+            setRawNotifications([]);
+          }
+        }
+      )
+      .subscribe();
 
-    // Sync typing status
-    try {
-      const unsubTyping = onSnapshot(collection(db, "typing"), (snapshot) => {
-        const states: Record<string, Record<string, boolean>> = {};
-        snapshot.docs.forEach((d) => {
-          const data = d.data() as { conversationId: string; memberId: string; isTyping: boolean };
-          if (data && data.conversationId && data.memberId) {
-            if (!states[data.conversationId]) {
-              states[data.conversationId] = {};
-            }
-            const inner = states[data.conversationId];
-            if (inner) {
-              inner[data.memberId] = data.isTyping;
-            }
+    // 2. Subscribe to Presence and broadcasted typing indicators
+    const presenceChannel = supabase.channel("room-presence", {
+      config: {
+        presence: {
+          key: currentUser?.id || "anonymous",
+        },
+      },
+    });
+
+    presenceChannel
+      .on("presence", { event: "sync" }, () => {
+        const state = presenceChannel.presenceState();
+        const formatted: Record<string, { online_at: string; name: string }> = {};
+        Object.keys(state).forEach((key) => {
+          const userPresences = state[key];
+          if (userPresences && userPresences[0]) {
+            formatted[key] = {
+              online_at: (userPresences[0] as any).online_at || new Date().toISOString(),
+              name: (userPresences[0] as any).name || "Member",
+            };
           }
         });
-        setTypingStates(states);
-      });
-      unsubs.push(unsubTyping);
-    } catch (typingSyncErr) {
-      console.error("Failed to sync typing indicators:", typingSyncErr);
-    }
-
-    // Sync presence status (who is online)
-    try {
-      const unsubPresence = onSnapshot(collection(db, "presence"), (snapshot) => {
-        const formatted: Record<string, { online_at: string; name: string }> = {};
-        snapshot.docs.forEach((d) => {
-          const data = d.data() as { online_at: string; name: string };
-          formatted[d.id] = {
-            online_at: data.online_at,
-            name: data.name,
-          };
-        });
         setOnlineMembers(formatted);
+      })
+      .on("broadcast", { event: "typing" }, (payload: any) => {
+        const { conversationId, memberId, isTyping } = payload.payload;
+        setTypingStates((prev) => ({
+          ...prev,
+          [conversationId]: {
+            ...(prev[conversationId] || {}),
+            [memberId]: isTyping,
+          },
+        }));
+      })
+      .subscribe(async (status: any) => {
+        if (status === "SUBSCRIBED" && currentUser) {
+          await presenceChannel.track({
+            online_at: new Date().toISOString(),
+            name: currentUser.name,
+          });
+        }
       });
-      unsubs.push(unsubPresence);
-    } catch (presenceSyncErr) {
-      console.error("Failed to sync presence states:", presenceSyncErr);
-    }
 
     return () => {
-      unsubs.forEach((unsub) => unsub());
+      supabase.removeChannel(dbChannel);
+      supabase.removeChannel(presenceChannel);
     };
   }, [currentUser]);
 
@@ -631,7 +629,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       const memberId = currentUser ? currentUser.id : "m1";
       const newActivity = { id: actId, memberId, action, object, time: new Date().toISOString(), kind };
       setActivity((a) => [newActivity, ...a]);
-      addActivityServer({ data: newActivity }).catch((err: any) =>
+      addActivityServer({ data: newActivity }).catch((err) =>
         console.error("Error logging activity to DB:", err),
       );
     },
@@ -746,9 +744,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         if (hasSupabaseKeys) {
           (async () => {
             try {
-              await setDoc(doc(db, "members", newUser.id), cleanOptional(newUser));
+              const { error } = await supabase.from("members").insert([newUser]);
+              if (error) throw error;
             } catch (err) {
-              console.error("Error inserting member to live Firebase DB:", err);
+              console.error("Error inserting member to live Supabase DB:", err);
             }
           })();
         }
@@ -761,9 +760,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         setMembers((prev) => prev.filter((m) => m.id !== memberId));
         if (hasSupabaseKeys) {
           try {
-            await deleteDoc(doc(db, "members", memberId));
+            const { error } = await supabase.from("members").delete().eq("id", memberId);
+            if (error) throw error;
           } catch (err) {
-            console.error("Error deleting member from live Firebase DB:", err);
+            console.error("Error deleting member from live Supabase DB:", err);
           }
         }
       },
@@ -779,9 +779,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         log("updated profile details", patch.name || currentUser?.name || "Member", "comment");
         if (hasSupabaseKeys) {
           try {
-            await updateDoc(doc(db, "members", id), cleanOptional(patch));
+            const { error } = await supabase.from("members").update(patch).eq("id", id);
+            if (error) throw error;
           } catch (err) {
-            console.error("Error updating member profile in live Firebase DB:", err);
+            console.error("Error updating member profile in live Supabase DB:", err);
           }
         }
       },
@@ -789,7 +790,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         const id = uid();
         const newPaper = { ...p, id, progress: 0, analysis: {} };
         setPapers((prev) => [newPaper, ...prev]);
-        addPaperServer({ data: newPaper }).catch((err: any) => console.error("Error saving paper to DB:", err));
+        addPaperServer({ data: newPaper }).catch((err) => console.error("Error saving paper to DB:", err));
         log("added a paper", p.title, "paper");
       },
       updatePaper: (id, patch) => {
@@ -804,7 +805,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           }
         }
         setPapers((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
-        updatePaperServer({ data: { id, patch } }).catch((err: any) =>
+        updatePaperServer({ data: { id, patch } }).catch((err) =>
           console.error("Error updating paper in DB:", err),
         );
       },
@@ -818,7 +819,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
             p.id === paperId ? { ...p, analysis: { ...p.analysis, [section]: val } } : p,
           ),
         );
-        setAnalysisServer({ data: { paperId, section, value: val } }).catch((err: any) =>
+        setAnalysisServer({ data: { paperId, section, value: val } }).catch((err) =>
           console.error("Error saving paper analysis section to DB:", err),
         );
       },
@@ -826,7 +827,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         const id = uid();
         const newTask = { ...t, id, comments: 0, attachments: 0, checklist: [] };
         setTasks((prev) => [newTask, ...prev]);
-        addTaskServer({ data: newTask }).catch((err: any) => console.error("Error saving task to DB:", err));
+        addTaskServer({ data: newTask }).catch((err) => console.error("Error saving task to DB:", err));
         log("created a task", t.title, "task");
       },
       moveTask: (id, status) => {
@@ -835,7 +836,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           log(`moved task to ${status}`, task.title, "task");
         }
         setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, status } : t)));
-        moveTaskServer({ data: { id, status } }).catch((err: any) =>
+        moveTaskServer({ data: { id, status } }).catch((err) =>
           console.error("Error moving task status in DB:", err),
         );
       },
@@ -849,7 +850,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           }
         }
         setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
-        updateTaskServer({ data: { id, patch } }).catch((err: any) =>
+        updateTaskServer({ data: { id, patch } }).catch((err) =>
           console.error("Error updating task in DB:", err),
         );
       },
@@ -870,7 +871,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
               : t,
           ),
         );
-        toggleCheckServer({ data: { taskId, index } }).catch((err: any) =>
+        toggleCheckServer({ data: { taskId, index } }).catch((err) =>
           console.error("Error toggling task checklist in DB:", err),
         );
       },
@@ -878,7 +879,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         const id = uid();
         const newNote = { ...n, id, updated: today() };
         setNotes((prev) => [newNote, ...prev]);
-        addNoteServer({ data: newNote }).catch((err: any) => console.error("Error saving note to DB:", err));
+        addNoteServer({ data: newNote }).catch((err) => console.error("Error saving note to DB:", err));
         log("created a note", n.title, "note");
       },
       updateNote: (id, patch) => {
@@ -888,7 +889,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         }
         const updatedDate = today();
         setNotes((prev) => prev.map((n) => (n.id === id ? { ...n, ...patch, updated: updatedDate } : n)));
-        updateNoteServer({ data: { id, patch: { ...patch, updated: updatedDate } } }).catch((err: any) =>
+        updateNoteServer({ data: { id, patch: { ...patch, updated: updatedDate } } }).catch((err) =>
           console.error("Error updating note in DB:", err),
         );
       },
@@ -920,7 +921,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
             s.id === id ? { ...s, comments: [...s.comments, comment] } : s,
           ),
         );
-        commentShotServer({ data: { shotId: id, comment } }).catch((err: any) =>
+        commentShotServer({ data: { id, comment } }).catch((err) =>
           console.error("Error adding screenshot comment to DB:", err),
         );
       },
@@ -946,11 +947,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           log("deleted voice note", v.title, "voice");
         }
         setVoiceNotes((prev) => prev.filter((x) => x.id !== id));
-        removeVoiceNoteServer({ data: id }).catch((err: any) =>
+        removeVoiceNoteServer({ data: id }).catch((err) =>
           console.error("Error deleting voice note in DB:", err),
         );
         if (v && v.storage_path) {
-          removeStorageObject(v.storage_path).catch((err: any) => console.error("Storage delete error:", err));
+          removeStorageObject(v.storage_path).catch((err) => console.error("Storage delete error:", err));
         }
       },
       renameVoiceNote: (id, title) => {
@@ -959,7 +960,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           log(`renamed voice note '${v.title}' to`, title, "voice");
         }
         setVoiceNotes((prev) => prev.map((v) => (v.id === id ? { ...v, title } : v)));
-        renameVoiceNoteServer({ data: { id, title } }).catch((err: any) =>
+        renameVoiceNoteServer({ data: { id, title } }).catch((err) =>
           console.error("Error renaming voice note in DB:", err),
         );
       },
@@ -985,16 +986,16 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           log("deleted file", f.name, "file");
         }
         setFiles((prev) => prev.filter((x) => x.id !== id));
-        removeFileServer({ data: id }).catch((err: any) => console.error("Error deleting file in DB:", err));
+        removeFileServer({ data: id }).catch((err) => console.error("Error deleting file in DB:", err));
         if (f && f.storage_path) {
-          removeStorageObject(f.storage_path).catch((err: any) => console.error("Storage delete error:", err));
+          removeStorageObject(f.storage_path).catch((err) => console.error("Storage delete error:", err));
         }
       },
       addLink: (l) => {
         const id = uid();
         const newLink = { ...l, id };
         setLinks((prev) => [newLink, ...prev]);
-        addLinkServer({ data: newLink }).catch((err: any) =>
+        addLinkServer({ data: newLink }).catch((err) =>
           console.error("Error saving resource link to DB:", err),
         );
         log("added a link", l.title, "file");
@@ -1005,7 +1006,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           log("updated link", link.title, "file");
         }
         setLinks((prev) => prev.map((l) => (l.id === id ? { ...l, ...patch } : l)));
-        updateLinkServer({ data: { id, patch } }).catch((err: any) =>
+        updateLinkServer({ data: { id, patch } }).catch((err) =>
           console.error("Error updating resource link in DB:", err),
         );
       },
@@ -1013,7 +1014,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         const id = uid();
         const newEvent = { ...e, id };
         setEvents((prev) => [...prev, newEvent]);
-        addEventServer({ data: newEvent }).catch((err: any) =>
+        addEventServer({ data: newEvent }).catch((err) =>
           console.error("Error saving calendar event to DB:", err),
         );
         log("scheduled", e.title, "task");
@@ -1024,7 +1025,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           log("updated calendar event", ev.title, "task");
         }
         setEvents((prev) => prev.map((e) => (e.id === id ? { ...e, ...patch } : e)));
-        updateEventServer({ data: { id, patch } }).catch((err: any) =>
+        updateEventServer({ data: { id, patch } }).catch((err) =>
           console.error("Error updating calendar event in DB:", err),
         );
       },
@@ -1034,7 +1035,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           log("cancelled calendar event", ev.title, "task");
         }
         setEvents((prev) => prev.filter((e) => e.id !== id));
-        removeEventServer({ data: id }).catch((err: any) =>
+        removeEventServer({ data: id }).catch((err) =>
           console.error("Error deleting calendar event in DB:", err),
         );
       },
@@ -1042,7 +1043,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         const id = uid();
         const newMeeting = { ...m, id };
         setMeetings((prev) => [newMeeting, ...prev]);
-        addMeetingServer({ data: newMeeting }).catch((err: any) =>
+        addMeetingServer({ data: newMeeting }).catch((err) =>
           console.error("Error saving meeting to DB:", err),
         );
         log("scheduled a meeting", m.title, "task");
@@ -1053,7 +1054,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           log("updated details of meeting", mt.title, "task");
         }
         setMeetings((prev) => prev.map((m) => (m.id === id ? { ...m, ...patch } : m)));
-        updateMeetingServer({ data: { id, patch } }).catch((err: any) =>
+        updateMeetingServer({ data: { id, patch } }).catch((err) =>
           console.error("Error updating meeting in DB:", err),
         );
       },
@@ -1066,7 +1067,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         const updatedPhases = phases.map((ph) => {
           if (ph.index >= newPhase.index) {
             // Update in DB too
-            updatePhaseServer({ data: { id: ph.id, patch: { index: ph.index + 1 } } }).catch((err: any) =>
+            updatePhaseServer({ data: { id: ph.id, patch: { index: ph.index + 1 } } }).catch((err) =>
               console.error("Error shifting phase index in DB on insertion:", err),
             );
             return { ...ph, index: ph.index + 1 };
@@ -1078,7 +1079,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         updatedPhases.sort((a, b) => a.index - b.index);
 
         setPhases(updatedPhases);
-        addPhaseServer({ data: newPhase }).catch((err: any) =>
+        addPhaseServer({ data: newPhase }).catch((err) =>
           console.error("Error saving phase to DB:", err),
         );
         log("added phase", p.name, "task");
@@ -1089,7 +1090,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           log("updated phase details for", ph.name, "task");
         }
         setPhases((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)).sort((a, b) => a.index - b.index));
-        updatePhaseServer({ data: { id, patch } }).catch((err: any) =>
+        updatePhaseServer({ data: { id, patch } }).catch((err) =>
           console.error("Error updating phase in DB:", err),
         );
       },
@@ -1103,13 +1104,13 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
             .map((ph, idx) => ({ ...ph, index: idx + 1 }));
 
           setPhases(remaining);
-          removePhaseServer({ data: id }).catch((err: any) =>
+          removePhaseServer({ data: id }).catch((err) =>
             console.error("Error deleting phase in DB:", err),
           );
 
           // Update index numbers in DB for remaining phases
           remaining.forEach((ph) => {
-            updatePhaseServer({ data: { id: ph.id, patch: { index: ph.index } } }).catch((err: any) =>
+            updatePhaseServer({ data: { id: ph.id, patch: { index: ph.index } } }).catch((err) =>
               console.error("Error updating remaining phase index in DB on deletion:", err),
             );
           });
@@ -1123,54 +1124,54 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         setProject(updated);
         localStorage.setItem("research_hub_project", JSON.stringify(updated));
         log("updated project settings", name, "task");
-        updateProjectServer({ data: updated }).catch((err: any) =>
+        updateProjectServer({ data: updated }).catch((err) =>
           console.error("Error saving project details to Supabase DB:", err)
         );
       },
       removePaper: (id) => {
         const p = papers.find((x) => x.id === id);
         setPapers((prev) => prev.filter((x) => x.id !== id));
-        removePaperServer({ data: id }).catch((err: any) => console.error("Error deleting paper in DB:", err));
+        removePaperServer({ data: id }).catch((err) => console.error("Error deleting paper in DB:", err));
         if (p) {
           log("deleted paper", p.title, "paper");
           if (p.storage_path) {
-            removeStorageObject(p.storage_path).catch((err: any) => console.error("Storage delete error:", err));
+            removeStorageObject(p.storage_path).catch((err) => console.error("Storage delete error:", err));
           }
         }
       },
       removeTask: (id) => {
         const t = tasks.find((x) => x.id === id);
         setTasks((prev) => prev.filter((x) => x.id !== id));
-        removeTaskServer({ data: id }).catch((err: any) => console.error("Error deleting task in DB:", err));
+        removeTaskServer({ data: id }).catch((err) => console.error("Error deleting task in DB:", err));
         if (t) log("deleted task", t.title, "task");
       },
       removeNote: (id) => {
         const n = notes.find((x) => x.id === id);
         setNotes((prev) => prev.filter((x) => x.id !== id));
-        removeNoteServer({ data: id }).catch((err: any) => console.error("Error deleting note in DB:", err));
+        removeNoteServer({ data: id }).catch((err) => console.error("Error deleting note in DB:", err));
         if (n) log("deleted note", n.title, "note");
       },
       removeShot: (id) => {
         const s = shots.find((x) => x.id === id);
         setShots((prev) => prev.filter((x) => x.id !== id));
-        removeShotServer({ data: id }).catch((err: any) => console.error("Error deleting screenshot in DB:", err));
+        removeShotServer({ data: id }).catch((err) => console.error("Error deleting screenshot in DB:", err));
         if (s) {
           log("deleted screenshot", s.title, "image");
           if (s.storage_path) {
-            removeStorageObject(s.storage_path).catch((err: any) => console.error("Storage delete error:", err));
+            removeStorageObject(s.storage_path).catch((err) => console.error("Storage delete error:", err));
           }
         }
       },
       removeLink: (id) => {
         const l = links.find((x) => x.id === id);
         setLinks((prev) => prev.filter((x) => x.id !== id));
-        removeLinkServer({ data: id }).catch((err: any) => console.error("Error deleting link in DB:", err));
+        removeLinkServer({ data: id }).catch((err) => console.error("Error deleting link in DB:", err));
         if (l) log("deleted link", l.title, "file");
       },
       removeMeeting: (id) => {
         const m = meetings.find((x) => x.id === id);
         setMeetings((prev) => prev.filter((x) => x.id !== id));
-        removeMeetingServer({ data: id }).catch((err: any) => console.error("Error deleting meeting in DB:", err));
+        removeMeetingServer({ data: id }).catch((err) => console.error("Error deleting meeting in DB:", err));
         if (m) log("deleted meeting", m.title, "task");
       },
       preferences,
@@ -1186,7 +1187,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         setNotifications([]);
         setRawNotifications([]);
         if (currentUser) {
-          clearNotificationsServer({ data: currentUser.id }).catch((err: any) =>
+          clearNotificationsServer({ data: currentUser.id }).catch((err) =>
             console.error("Error clearing DB notifications:", err)
           );
         }
@@ -1195,7 +1196,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       markNotificationRead: (notifId) => {
         setNotifications((prev) => prev.filter((n) => n.id !== notifId));
         setRawNotifications((prev) => prev.filter((n) => n.id !== notifId));
-        markNotificationReadServer({ data: { id: notifId, is_read: true } }).catch((err: any) =>
+        markNotificationReadServer({ data: { id: notifId, is_read: true } }).catch((err) =>
           console.error("Error marking notification read in DB:", err)
         );
       },
@@ -1501,7 +1502,6 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       setSearchQuery,
       searchOpen,
       setSearchOpen,
-      log,
       clearAllData: async () => {
         try {
           await clearAllWorkspaceDataServer();

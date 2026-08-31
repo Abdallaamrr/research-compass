@@ -13,6 +13,7 @@ import { uploadFile } from "@/lib/uploads";
 import { formatLinkedinUrl, getLinkedinUsername } from "@/lib/utils";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { supabase } from "@/lib/supabase";
 import type { Member } from "@/data/workspace";
 import { sendTestEmailServer } from "@/lib/db-server";
 
@@ -255,7 +256,11 @@ function SettingsPage() {
                         </label>
                         {profileCvStoragePath && (
                           <a
-                            href={profileCv}
+                            href={
+                              supabase.storage
+                                .from("documents")
+                                .getPublicUrl(profileCvStoragePath).data.publicUrl
+                            }
                             target="_blank"
                             rel="noreferrer"
                             className="text-xs font-medium text-brand hover:underline shrink-0"

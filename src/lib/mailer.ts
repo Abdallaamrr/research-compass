@@ -1,4 +1,4 @@
-import { getEnv } from "./firebase";
+import { supabase, hasSupabaseKeys, getEnv } from "./supabase";
 import * as seed from "@/data/workspace";
 
 /**

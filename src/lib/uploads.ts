@@ -1,6 +1,4 @@
-import { createServerFn } from "@tanstack/react-start";
-import { storage, hasFirebaseKeys } from "./firebase";
-import { ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
+import { supabase, hasSupabaseKeys } from "./supabase";
 
 export interface UploadedFileDetails {
   url: string;
@@ -9,66 +7,13 @@ export interface UploadedFileDetails {
   size_bytes: number;
 }
 
-// Server-side upload handler to completely bypass client CORS restrictions
-const uploadFileServer = createServerFn({ method: "POST" })
-  .validator((d: { base64Data: string; name: string; folder: string; mimeType: string }) => d)
-  .handler(async ({ data }) => {
-    if (!hasFirebaseKeys) {
-      throw new Error("Firebase configuration keys are missing on the server.");
-    }
-
-    try {
-      const base64Content = data.base64Data.split(";base64,").pop() || data.base64Data;
-      const binaryString = atob(base64Content);
-      const len = binaryString.length;
-      const bytes = new Uint8Array(len);
-      for (let i = 0; i < len; i++) {
-        bytes[i] = binaryString.charCodeAt(i);
-      }
-
-      const fileExt = data.name.split(".").pop() || "bin";
-      const cleanFolder = data.folder.replace(/\/+$/, "");
-      const uniqueId = typeof crypto !== "undefined" && crypto.randomUUID
-        ? crypto.randomUUID()
-        : Math.random().toString(36).substring(2, 15);
-      const storagePath = `${cleanFolder}/${uniqueId}_${Date.now()}.${fileExt}`;
-
-      const storageRef = ref(storage, storagePath);
-      await uploadBytes(storageRef, bytes, { contentType: data.mimeType });
-      const url = await getDownloadURL(storageRef);
-
-      return {
-        url,
-        storagePath,
-      };
-    } catch (e: any) {
-      console.error("🔥 STORAGE ERROR");
-      console.error("code:", e?.code);
-      console.error("message:", e?.message);
-      console.error("serverResponse:", e?.serverResponse);
-      console.error("customData:", e?.customData);
-      console.error("name:", e?.name);
-      console.error("full:", e);
-      throw new Error(e.message || String(e));
-    }
-  });
-
-// Server-side delete handler
-const removeStorageObjectServer = createServerFn({ method: "POST" })
-  .validator((storagePath: string) => storagePath)
-  .handler(async ({ data: storagePath }) => {
-    if (!hasFirebaseKeys) return;
-    try {
-      const storageRef = ref(storage, storagePath);
-      await deleteObject(storageRef);
-    } catch (e: any) {
-      console.error("Server-side Firebase Storage delete failed:", e);
-      throw new Error(e.message || String(e));
-    }
-  });
-
 /**
- * Uploads a file or blob by transferring it to the server and uploading to Firebase Storage.
+ * Uploads a file or blob to Supabase Storage, or falls back to a Base64 Data URL if offline or if upload fails.
+ * 
+ * @param file The file or blob to upload
+ * @param name The original filename or a friendly name
+ * @param folder The storage folder prefix (e.g. "files", "media", "voice", "cvs")
+ * @param options Additional options (e.g. accept type filter)
  */
 export async function uploadFile(
   file: File | Blob,
@@ -79,7 +24,7 @@ export async function uploadFile(
   const mimeType = file.type || "application/octet-stream";
   const sizeBytes = file.size;
 
-  if (!hasFirebaseKeys) {
+  if (!hasSupabaseKeys) {
     console.info("Offline mode: converting upload to Base64 Data URL");
     const url = await convertToBase64(file);
     return {
@@ -91,17 +36,42 @@ export async function uploadFile(
   }
 
   try {
-    const base64Data = await convertToBase64(file);
-    const res = await uploadFileServer({ data: { base64Data, name, folder, mimeType } });
+    // Automatically create/verify bucket exists (fails cleanly if exists)
+    await supabase.storage.createBucket("documents", {
+      public: true,
+      fileSizeLimit: 52428800, // 50MB
+    }).catch(() => {});
+
+    const fileExt = name.split(".").pop() || "bin";
+    const cleanFolder = folder.replace(/\/+$/, "");
+    const uniqueId = typeof crypto !== "undefined" && crypto.randomUUID
+      ? crypto.randomUUID()
+      : Math.random().toString(36).substring(2, 15);
+    const storagePath = `${cleanFolder}/${uniqueId}_${Date.now()}.${fileExt}`;
+
+    const { error } = await supabase.storage
+      .from("documents")
+      .upload(storagePath, file, {
+        cacheControl: "3600",
+        upsert: false,
+        contentType: mimeType,
+      });
+
+    if (error) throw error;
+
+    // Get public URL
+    const { data: urlData } = supabase.storage
+      .from("documents")
+      .getPublicUrl(storagePath);
 
     return {
-      url: res.url,
-      storage_path: res.storagePath,
+      url: urlData.publicUrl,
+      storage_path: storagePath,
       mime_type: mimeType,
       size_bytes: sizeBytes,
     };
   } catch (err) {
-    console.error("Firebase storage upload failed:", err);
+    console.error("Supabase storage upload failed:", err);
     throw new Error(
       `File upload failed: ${err instanceof Error ? err.message : "Unknown storage error"}. Please check your connection and try again.`
     );
@@ -109,24 +79,28 @@ export async function uploadFile(
 }
 
 /**
- * Removes a file from Firebase Storage bucket server-side.
+ * Removes a file from Supabase Storage bucket.
+ * 
+ * @param storagePath The path of the file inside the bucket
  */
 export async function removeStorageObject(storagePath: string): Promise<void> {
-  if (!hasFirebaseKeys || !storagePath || storagePath.startsWith("offline/") || storagePath.startsWith("fallback/")) {
+  if (!hasSupabaseKeys || !storagePath || storagePath.startsWith("offline/") || storagePath.startsWith("fallback/")) {
     return;
   }
   try {
-    await removeStorageObjectServer({ data: storagePath });
+    const { error } = await supabase.storage
+      .from("documents")
+      .remove([storagePath]);
+    if (error) throw error;
   } catch (err) {
-    console.error(`Failed to delete Firebase storage path "${storagePath}":`, err);
+    console.error(`Failed to delete storage path "${storagePath}":`, err);
   }
 }
 
 function convertToBase64(file: File | Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = (e) => reject(e);
+    reader.onloadend = () => resolve(reader.result as string);
     reader.readAsDataURL(file);
   });
 }
