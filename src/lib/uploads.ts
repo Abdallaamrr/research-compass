@@ -24,6 +24,13 @@ export async function uploadFile(
   const mimeType = file.type || "application/octet-stream";
   const sizeBytes = file.size;
 
+  if (typeof window !== "undefined") {
+    const savedUserStr = localStorage.getItem("research_hub_user");
+    if (!savedUserStr) {
+      throw new Error("No user is signed in. Please sign in or register before uploading files.");
+    }
+  }
+
   if (!hasSupabaseKeys) {
     console.info("Offline mode: converting upload to Base64 Data URL");
     const url = await convertToBase64(file);

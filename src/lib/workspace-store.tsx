@@ -365,35 +365,30 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     getWorkspaceDataServer()
       .then((data) => {
         const rawMembers = data.members || [];
-        let reals = rawMembers;
-        if (hasSupabaseKeys) {
-          const isFake = (m: any) => m.email.endsWith("@uni.edu") || !!m.id.match(/^m[1-6]$/);
-          const fakes = rawMembers.filter(isFake);
-          reals = rawMembers.filter((m) => !isFake(m));
+        const reals = rawMembers;
 
-          if (fakes.length > 0) {
-            Promise.all(fakes.map((fm) => supabase.from("members").delete().eq("id", fm.id)))
-              .then(() => console.info("Purged mock members from live database."))
-              .catch((err) => console.error("Error purging mock members:", err));
+        // Validate current user session against live database members
+        const savedUserStr = localStorage.getItem("research_hub_user");
+        if (savedUserStr) {
+          try {
+            const savedUser = JSON.parse(savedUserStr);
+            const existingUser = reals.find((m) => m.id === savedUser.id);
+            if (existingUser) {
+              // Keep logged in, sync with database profile data
+              setCurrentUser({ ...existingUser, ...savedUser });
+            } else {
+              // User is not in the live database! Force logout to prevent RLS/foreign key failures
+              console.warn("Stale user session detected on database sync, clearing user.");
+              localStorage.removeItem("research_hub_user");
+              setCurrentUser(null);
+            }
+          } catch {
+            localStorage.removeItem("research_hub_user");
+            setCurrentUser(null);
           }
         }
 
-        setMembers(() => {
-          const combined = [...reals];
-          const savedUserStr = localStorage.getItem("research_hub_user");
-          if (savedUserStr) {
-            try {
-              const savedUser = JSON.parse(savedUserStr);
-              const existingIdx = combined.findIndex((m) => m.id === savedUser.id);
-              if (existingIdx !== -1) {
-                combined[existingIdx] = { ...combined[existingIdx], ...savedUser };
-              } else {
-                combined.push(savedUser);
-              }
-            } catch {}
-          }
-          return combined;
-        });
+        setMembers(reals);
         setPapers(data.papers);
         setTasks(data.tasks);
         setNotes(data.notes);
