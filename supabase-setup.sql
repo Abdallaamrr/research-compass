@@ -16,6 +16,11 @@ DROP TABLE IF EXISTS "activity"             CASCADE;
 DROP TABLE IF EXISTS "phases"               CASCADE;
 DROP TABLE IF EXISTS "events"               CASCADE;
 DROP TABLE IF EXISTS "meetings"             CASCADE;
+DROP TABLE IF EXISTS "comments"             CASCADE;
+DROP TABLE IF EXISTS "conversation_members" CASCADE;
+DROP TABLE IF EXISTS "messages"             CASCADE;
+DROP TABLE IF EXISTS "conversations"        CASCADE;
+DROP TABLE IF EXISTS "notifications"        CASCADE;
 DROP TABLE IF EXISTS "links"                CASCADE;
 DROP TABLE IF EXISTS "files"                CASCADE;
 DROP TABLE IF EXISTS "voiceNotes"           CASCADE;
@@ -265,6 +270,78 @@ INSERT INTO "project" ("id", "name", "topic", "institution", "phase", "progress"
 VALUES ('default', 'SehatMasr', 'Ontology-Driven Clinical NLP for Early Sepsis Risk Detection', 'Faculty of Computing · Graduation Research Group 07', 'Phase 3 · Dataset Collection', 46)
 ON CONFLICT ("id") DO NOTHING;
 
+-- Universal Comments Table
+CREATE TABLE "comments" (
+  "id"                 TEXT        PRIMARY KEY,
+  "user_id"            TEXT        NOT NULL REFERENCES "members"("id") ON DELETE CASCADE,
+  "project_id"         TEXT,
+  "paper_id"           TEXT        REFERENCES "papers"("id") ON DELETE CASCADE,
+  "task_id"            TEXT        REFERENCES "tasks"("id") ON DELETE CASCADE,
+  "note_id"            TEXT        REFERENCES "notes"("id") ON DELETE CASCADE,
+  "file_id"            TEXT        REFERENCES "files"("id") ON DELETE CASCADE,
+  "shot_id"            TEXT        REFERENCES "shots"("id") ON DELETE CASCADE,
+  "parent_comment_id"  TEXT        REFERENCES "comments"("id") ON DELETE CASCADE,
+  "content"            TEXT        NOT NULL,
+  
+  -- Attachment metadata
+  "url"                TEXT,
+  "storage_path"       TEXT,
+  "mime_type"          TEXT,
+  "size_bytes"         BIGINT,
+  
+  "created_at"         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  "updated_at"         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Conversations Table
+CREATE TABLE "conversations" (
+  "id"                 TEXT        PRIMARY KEY,
+  "name"               TEXT,
+  "is_group"           BOOLEAN     NOT NULL DEFAULT false,
+  "paper_id"           TEXT        REFERENCES "papers"("id") ON DELETE CASCADE,
+  "phase_id"           TEXT,
+  "created_at"         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Conversation Members Table
+CREATE TABLE "conversation_members" (
+  "conversation_id"    TEXT        NOT NULL REFERENCES "conversations"("id") ON DELETE CASCADE,
+  "member_id"          TEXT        NOT NULL REFERENCES "members"("id") ON DELETE CASCADE,
+  PRIMARY KEY ("conversation_id", "member_id")
+);
+
+-- Messages Table
+CREATE TABLE "messages" (
+  "id"                 TEXT        PRIMARY KEY,
+  "conversation_id"    TEXT        NOT NULL REFERENCES "conversations"("id") ON DELETE CASCADE,
+  "sender_id"          TEXT        NOT NULL REFERENCES "members"("id") ON DELETE CASCADE,
+  "message_type"       TEXT        NOT NULL CHECK ("message_type" IN ('text', 'voice', 'image', 'file', 'link', 'system')),
+  "content"            TEXT        NOT NULL,
+  "reply_to_message_id" TEXT       REFERENCES "messages"("id") ON DELETE SET NULL,
+  
+  -- Attachment metadata
+  "url"                TEXT,
+  "storage_path"       TEXT,
+  "mime_type"          TEXT,
+  "size_bytes"         BIGINT,
+  
+  "created_at"         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  "updated_at"         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  "deleted_at"         TIMESTAMPTZ
+);
+
+-- Notifications Table
+CREATE TABLE "notifications" (
+  "id"                 TEXT        PRIMARY KEY,
+  "user_id"            TEXT        NOT NULL REFERENCES "members"("id") ON DELETE CASCADE,
+  "type"               TEXT        NOT NULL,
+  "title"              TEXT        NOT NULL,
+  "description"        TEXT        NOT NULL,
+  "is_read"            BOOLEAN     NOT NULL DEFAULT false,
+  "link"               TEXT,
+  "created_at"         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- Activity Log
 CREATE TABLE "activity" (
   "id"          TEXT        PRIMARY KEY,
@@ -416,6 +493,11 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON "phases"               TO anon, authenti
 GRANT SELECT, INSERT, UPDATE, DELETE ON "phase_members"        TO anon, authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON "activity"             TO anon, authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON "project"              TO anon, authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON "comments"             TO anon, authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON "conversations"        TO anon, authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON "conversation_members" TO anon, authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON "messages"             TO anon, authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON "notifications"        TO anon, authenticated;
 GRANT SELECT                          ON "recent_activity"      TO anon, authenticated;
 
 -- ============================================================
@@ -471,3 +553,35 @@ CREATE POLICY "Permissive Policy" ON "activity"             FOR ALL TO public US
 
 ALTER TABLE "project"              ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Permissive Policy" ON "project"              FOR ALL TO public USING (true) WITH CHECK (true);
+
+ALTER TABLE "comments"             ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Permissive Policy" ON "comments"             FOR ALL TO public USING (true) WITH CHECK (true);
+
+ALTER TABLE "conversations"        ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Permissive Policy" ON "conversations"        FOR ALL TO public USING (true) WITH CHECK (true);
+
+ALTER TABLE "conversation_members" ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Permissive Policy" ON "conversation_members" FOR ALL TO public USING (true) WITH CHECK (true);
+
+ALTER TABLE "messages"             ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Permissive Policy" ON "messages"             FOR ALL TO public USING (true) WITH CHECK (true);
+
+ALTER TABLE "notifications"        ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Permissive Policy" ON "notifications"        FOR ALL TO public USING (true) WITH CHECK (true);
+
+-- ============================================================
+-- ADD TABLES TO SUPABASE REALTIME PUBLICATION
+-- ============================================================
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE "comments";
+    ALTER PUBLICATION supabase_realtime ADD TABLE "conversations";
+    ALTER PUBLICATION supabase_realtime ADD TABLE "conversation_members";
+    ALTER PUBLICATION supabase_realtime ADD TABLE "messages";
+    ALTER PUBLICATION supabase_realtime ADD TABLE "notifications";
+  END IF;
+EXCEPTION WHEN OTHERS THEN
+  -- Fail silently if publication setup encounters permission issues
+END;
+$$;
