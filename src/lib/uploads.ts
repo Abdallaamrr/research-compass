@@ -19,12 +19,15 @@ export async function uploadFile(
   file: File | Blob,
   name: string,
   folder: string,
-  options?: { accept?: string }
+  options?: { accept?: string; allowAnonymous?: boolean }
 ): Promise<UploadedFileDetails> {
   const mimeType = file.type || "application/octet-stream";
   const sizeBytes = file.size;
 
-  if (typeof window !== "undefined") {
+  // Allow CV uploads during registration (folder === "cvs") or explicit allowAnonymous
+  const isAnonymousAllowed = folder === "cvs" || options?.allowAnonymous;
+
+  if (typeof window !== "undefined" && !isAnonymousAllowed) {
     const savedUserStr = localStorage.getItem("research_hub_user");
     if (!savedUserStr) {
       throw new Error("No user is signed in. Please sign in or register before uploading files.");
