@@ -194,6 +194,7 @@ type Ctx = {
   panelEffect: "glass" | "solid";
   setPanelEffect: (val: "glass" | "solid") => void;
   comments: Comment[];
+  log: (action: string, object: string, kind: Activity["kind"]) => void;
   addComment: (c: Omit<Comment, "id" | "created_at" | "updated_at">) => Promise<void>;
   updateComment: (id: string, content: string) => Promise<void>;
   removeComment: (id: string) => Promise<void>;
@@ -671,6 +672,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       events,
       phases,
       activity,
+      log,
       currentUser: currentUser as any,
       member: (id?: string) => members.find((m) => m.id === id),
       loginUser: (m) => {

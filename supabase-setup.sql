@@ -205,6 +205,7 @@ CREATE TABLE "meetings" (
   "decisions"   JSONB       NOT NULL DEFAULT '[]',
   "actionItems" JSONB       NOT NULL DEFAULT '[]',
   "notes"       TEXT        NOT NULL DEFAULT '',
+  "link"        TEXT,
   "created_at"  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -245,6 +246,7 @@ CREATE TABLE "phases" (
   "progress"     INTEGER     NOT NULL DEFAULT 0 CHECK ("progress" BETWEEN 0 AND 100),
   "members"      JSONB       NOT NULL DEFAULT '[]',
   "deliverables" JSONB       NOT NULL DEFAULT '[]',
+  "details"      TEXT,
   "created_at"   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

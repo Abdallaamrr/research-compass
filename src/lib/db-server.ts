@@ -654,7 +654,19 @@ export const addMeetingServer = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     if (!hasSupabaseKeys) return data;
     try {
-      const { data: res, error } = await supabase.from("meetings").insert([data]).select();
+      const payload = {
+        id: data.id,
+        title: data.title,
+        date: data.date || "",
+        time: data.time || "",
+        participants: data.participants || [],
+        agenda: data.agenda || [],
+        decisions: data.decisions || [],
+        actionItems: data.actionItems || [],
+        notes: data.notes || "",
+        link: data.link || null,
+      };
+      const { data: res, error } = await supabase.from("meetings").insert([payload]).select();
       if (error) throw error;
       return res?.[0] || data;
     } catch (e) {
@@ -778,7 +790,18 @@ export const addPhaseServer = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     if (!hasSupabaseKeys) return data;
     try {
-      const { data: res, error } = await supabase.from("phases").insert([data]).select();
+      const payload = {
+        id: data.id,
+        index: data.index,
+        name: data.name,
+        start: data.start || "",
+        end: data.end || "",
+        progress: data.progress || 0,
+        members: data.members || [],
+        deliverables: data.deliverables || [],
+        details: data.details || null,
+      };
+      const { data: res, error } = await supabase.from("phases").insert([payload]).select();
       if (error) throw error;
       return res?.[0] || data;
     } catch (e) {

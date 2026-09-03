@@ -40,7 +40,12 @@ function TasksPage() {
       <PageHeader
         title="Task Board"
         subtitle="Drag cards between columns — every task can link to a paper, phase or file."
-        actions={<AddTaskDialog />}
+        actions={
+          <div className="flex items-center gap-2">
+            <BatchAddTasksDialog />
+            <AddTaskDialog />
+          </div>
+        }
       />
 
       {/* Mobile Column Tabs Selection */}
@@ -502,6 +507,147 @@ function AddTaskDialog() {
             }}
           >
             Create task
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function BatchAddTasksDialog() {
+  const ws = useWorkspace();
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState("");
+  const [assigneeId, setAssigneeId] = useState("m1");
+  const [priority, setPriority] = useState<Priority>("MEDIUM");
+  const [status, setStatus] = useState<TaskStatus>("todo");
+  const [label, setLabel] = useState("Research");
+
+  const handleBatchInsert = () => {
+    if (!text.trim()) {
+      toast.error("Please paste or type a paragraph of tasks.");
+      return;
+    }
+
+    const rawLines = text
+      .split(/\r?\n/)
+      .map((line) => line.replace(/^[\s-*•\d\.\)]+/, "").trim())
+      .filter((line) => line.length > 2);
+
+    if (rawLines.length === 0) {
+      toast.error("No valid task items found in text.");
+      return;
+    }
+
+    let count = 0;
+    const todayStr = new Date().toISOString().split("T")[0];
+
+    rawLines.forEach((title) => {
+      ws.addTask({
+        title,
+        description: `Imported from paragraph on ${new Date().toLocaleDateString()}`,
+        assigneeId,
+        priority,
+        status,
+        due: todayStr,
+        labels: [label],
+      });
+      count++;
+    });
+
+    toast.success(`Divided paragraph into ${count} tasks!`);
+    setText("");
+    setOpen(false);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button variant="outline" className="inline-flex items-center gap-2 text-xs md:text-sm cursor-pointer border-brand/40 text-brand hover:bg-brand/10">
+          <FileText className="h-4 w-4" />
+          Batch Add Tasks
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-lg border border-border">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <FileText className="h-5 w-5 text-brand" />
+            Divide Paragraph into Tasks
+          </DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4 py-2">
+          <div>
+            <Label className="mb-1.5 block text-xs text-muted-foreground font-semibold">
+              Paste Paragraph / List of Tasks
+            </Label>
+            <Textarea
+              rows={6}
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder="Paste a paragraph or bulleted list of tasks here...
+
+Example:
+- Implement SNOMED CT ontology mapper
+- Extract sepsis cohort from MIMIC-IV dataset
+- Conduct model evaluation and AUROC benchmarking
+- Write draft of thesis section 4"
+              className="text-xs md:text-sm leading-relaxed"
+            />
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <Label className="mb-1.5 block text-xs text-muted-foreground">Default Assignee</Label>
+              <Select value={assigneeId} onValueChange={setAssigneeId}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {ws.members.map((m) => (
+                    <SelectItem key={m.id} value={m.id}>
+                      {m.name} ({m.role})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="mb-1.5 block text-xs text-muted-foreground">Default Column</Label>
+              <Select value={status} onValueChange={(v) => setStatus(v as TaskStatus)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {TASK_COLUMNS.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>{c.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="mb-1.5 block text-xs text-muted-foreground">Default Priority</Label>
+              <Select value={priority} onValueChange={(v) => setPriority(v as Priority)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {(["LOW", "MEDIUM", "HIGH", "URGENT"] as Priority[]).map((p) => (
+                    <SelectItem key={p} value={p}>{p}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="mb-1.5 block text-xs text-muted-foreground">Default Label</Label>
+              <Select value={label} onValueChange={setLabel}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {LABELS.map((l) => (
+                    <SelectItem key={l} value={l}>{l}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
+          <Button onClick={handleBatchInsert} className="bg-brand text-brand-foreground font-semibold">
+            Split & Create Tasks
           </Button>
         </DialogFooter>
       </DialogContent>
